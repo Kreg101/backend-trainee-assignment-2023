@@ -5,10 +5,12 @@ import (
 	"net/http"
 )
 
+// HttpServer connects database with http requests
 type HttpServer struct {
 	listenAddr string
 }
 
+// NewServer creates new HttpServer
 func NewServer(listenAddr string) *HttpServer {
 	return &HttpServer{
 		listenAddr: listenAddr,
@@ -19,9 +21,10 @@ func NewServer(listenAddr string) *HttpServer {
 func (s *HttpServer) Start() {
 	router := chi.NewRouter()
 
-	router.Post("/segment", createSegment)
-	router.Delete("/segment", deleteSegment)
-	router.Post("/user", updateUser)
+	router.Post("/segments", createSegment)
+	router.Delete("/segments", deleteSegment)
+	router.Post("/users", createUser)
+	router.Patch("/users", updateUser)
 	router.Get("/user", getUser)
 
 	// TODO: handle errors
@@ -41,7 +44,12 @@ func deleteSegment(w http.ResponseWriter, r *http.Request) {
 
 }
 
-// updateUser creates new user or update existing user
+// createUser creates new user
+func createUser(w http.ResponseWriter, r *http.Request) {
+
+}
+
+// updateUser update existing user
 func updateUser(w http.ResponseWriter, r *http.Request) {
 
 }
