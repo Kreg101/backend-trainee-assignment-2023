@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -55,8 +56,8 @@ func (s *PostgresStore) Init() error {
 	}
 
 	_, err = tx.Exec(`CREATE TABLE IF NOT EXISTS user_segments (
-	 user_id INT,
-	 segment_id INT,
+	 user_id BIGINT NOT NULL,
+	 segment_id INT NOT NULL,
 	 PRIMARY KEY (user_id, segment_id),
 	 FOREIGN KEY (user_id) REFERENCES users(id),
 	 FOREIGN KEY (segment_id) REFERENCES segments(id)
@@ -71,7 +72,8 @@ func (s *PostgresStore) Init() error {
 
 // CreateSegment creates new segment in database
 func (s *PostgresStore) CreateSegment(name string) error {
-	return nil
+	_, err := s.db.Exec(`INSERT INTO segments (name) VALUES ($1)`, name)
+	return err
 }
 
 // DeleteSegment deletes segment from database
@@ -80,16 +82,37 @@ func (s *PostgresStore) DeleteSegment(name string) error {
 }
 
 // CreateUser creates new user in database and returns new id
-func (s *PostgresStore) CreateUser(id int64) (int64, error) {
+func (s *PostgresStore) CreateUser(id int64) error {
 	_, err := s.db.Exec(`INSERT INTO users (id) VALUES ($1);`, id)
-	if err != nil {
-		return 0, err
-	}
-	return id, nil
+	return err
 }
 
 // UpdateUser updates existing user in database
+// TODO handle errors
 func (s *PostgresStore) UpdateUser(user User) error {
+	for _, name := range user.AppendSegments {
+		_, err := s.db.Exec(
+			`INSERT INTO user_segments (user_id, segment_id)
+					VALUES (
+					   (SELECT id FROM users WHERE id = $1),
+					   (SELECT id FROM segments WHERE name = $2)
+					);`, user.Id, name)
+		if err != nil {
+			fmt.Printf("can't append segment to user %v\n", err)
+		}
+	}
+
+	for _, name := range user.DeleteSegments {
+		_, err := s.db.Exec(
+			`DELETE FROM user_segments
+					WHERE user_id = (SELECT id FROM users WHERE id = $1)
+					AND segment_id = (SELECT id FROM segments WHERE name = $2);`,
+			user.Id, name)
+		if err != nil {
+			fmt.Printf("can't delete segment from user %v\n", err)
+		}
+	}
+
 	return nil
 }
 
