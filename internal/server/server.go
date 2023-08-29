@@ -1,9 +1,8 @@
 package server
 
 import (
-	"encoding/json"
 	"github.com/Kreg101/backend-trainee-assignment-2023/internal/db"
-	"github.com/go-chi/chi/v5"
+	"github.com/labstack/echo/v4"
 	"net/http"
 )
 
@@ -11,7 +10,7 @@ import (
 type Storage interface {
 	CreateSegment(name string) error
 	DeleteSegment(name string) error
-	CreateUser() (int64, error)
+	CreateUser(int64) (int64, error)
 	UpdateUser(user db.User) error
 	GetUser(id int64) (*db.User, error)
 }
@@ -36,51 +35,49 @@ func NewServer(listenAddr string, storage Storage) *HttpServer {
 
 // Run configures the server and starts it
 func (s *HttpServer) Run() error {
-	router := chi.NewRouter()
+	e := echo.New()
 
-	router.Post("/segments", s.createSegment)
-	router.Delete("/segments", s.deleteSegment)
-	router.Post("/users", s.createUser)
-	router.Patch("/users", s.updateUser)
-	router.Get("/user", s.getUser)
+	e.POST("/segments", s.createSegment)
+	e.DELETE("/segments", s.deleteSegment)
+	e.POST("/users", s.createUser)
+	e.PATCH("/users", s.updateUser)
+	e.GET("/user", s.getUser)
 
-	return http.ListenAndServe(s.listenAddr, router)
+	return e.Start(s.listenAddr)
 }
 
 // createSegment creates new segment
-func (s *HttpServer) createSegment(w http.ResponseWriter, r *http.Request) {
-
+func (s *HttpServer) createSegment(c echo.Context) error {
+	return nil
 }
 
 // deleteSegment deletes existing segment
-func (s *HttpServer) deleteSegment(w http.ResponseWriter, r *http.Request) {
-
+func (s *HttpServer) deleteSegment(c echo.Context) error {
+	return nil
 }
 
-// createUser creates new user
-func (s *HttpServer) createUser(w http.ResponseWriter, r *http.Request) {
-	id, err := s.storage.CreateUser()
+// createUser creates new user and returns id
+func (s *HttpServer) createUser(c echo.Context) error {
+	var userID UserID
+	err := c.Bind(&userID)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("can't create new user"))
-		return
+		return err
 	}
 
-	userID := UserID{Id: id}
-	err = json.NewEncoder(w).Encode(userID)
+	id, err := s.storage.CreateUser(userID.Id)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("can't return new user"))
-		return
+		return err
 	}
+
+	return c.JSON(http.StatusCreated, UserID{Id: id})
 }
 
 // updateUser update existing user
-func (s *HttpServer) updateUser(w http.ResponseWriter, r *http.Request) {
-
+func (s *HttpServer) updateUser(c echo.Context) error {
+	return nil
 }
 
 // getUser gets user by id
-func (s *HttpServer) getUser(w http.ResponseWriter, r *http.Request) {
-
+func (s *HttpServer) getUser(c echo.Context) error {
+	return nil
 }

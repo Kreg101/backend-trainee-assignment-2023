@@ -38,7 +38,7 @@ func (s *PostgresStore) Init() error {
 	defer tx.Rollback()
 
 	_, err = tx.Exec(`CREATE TABLE IF NOT EXISTS users (
-	 id SERIAL PRIMARY KEY
+	 id BIGINT UNIQUE
 	);`)
 
 	if err != nil {
@@ -47,7 +47,7 @@ func (s *PostgresStore) Init() error {
 
 	_, err = tx.Exec(`CREATE TABLE IF NOT EXISTS segments  (
 	 id SERIAL PRIMARY KEY,
-	 name VARCHAR(50) NOT NULL
+	 name VARCHAR(50) UNIQUE NOT NULL
 	);`)
 
 	if err != nil {
@@ -80,10 +80,8 @@ func (s *PostgresStore) DeleteSegment(name string) error {
 }
 
 // CreateUser creates new user in database and returns new id
-func (s *PostgresStore) CreateUser() (int64, error) {
-	var id int64
-	row := s.db.QueryRow(`INSERT INTO users DEFAULT VALUES RETURNING id;`)
-	err := row.Scan(&id)
+func (s *PostgresStore) CreateUser(id int64) (int64, error) {
+	_, err := s.db.Exec(`INSERT INTO users (id) VALUES ($1);`, id)
 	if err != nil {
 		return 0, err
 	}
