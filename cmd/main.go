@@ -3,11 +3,14 @@ package main
 import (
 	"github.com/Kreg101/backend-trainee-assignment-2023/internal/db"
 	"github.com/Kreg101/backend-trainee-assignment-2023/internal/server"
+	"os"
 )
 
 func main() {
 
-	storage, err := db.NewStorage("host=localhost user=postgres password=Kravchenko01 dbname=really sslmode=disable")
+	readEnv()
+
+	storage, err := db.NewStorage(databaseDSN)
 	if err != nil {
 		panic(err)
 	}
@@ -23,4 +26,14 @@ func main() {
 		panic(err)
 	}
 
+}
+
+var (
+	databaseDSN string
+)
+
+func readEnv() {
+	if envDataBaseDSN := os.Getenv("DATABASE_DSN"); envDataBaseDSN != "" {
+		databaseDSN = envDataBaseDSN
+	}
 }

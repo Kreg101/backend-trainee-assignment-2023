@@ -131,6 +131,10 @@ func (s *HttpServer) getUser(c echo.Context) error {
 		return err
 	}
 
+	if userID.Id <= 0 {
+		return errors.New("invalid id")
+	}
+
 	user, err := s.storage.GetUser(userID.Id)
 	if err != nil {
 		return err
