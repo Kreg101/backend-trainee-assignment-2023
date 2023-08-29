@@ -77,8 +77,38 @@ func (s *PostgresStore) CreateSegment(name string) error {
 }
 
 // DeleteSegment deletes segment from database
+// TODO handle errors
 func (s *PostgresStore) DeleteSegment(name string) error {
-	return nil
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(
+		`DELETE FROM user_segments
+				WHERE segment_id IN (
+				  SELECT id FROM segments
+				  WHERE name = $1
+				);`,
+		name)
+
+	if err != nil {
+		fmt.Printf("can't delete from user_segments: %v\n", err)
+		return err
+	}
+
+	_, err = tx.Exec(
+		`DELETE FROM segments
+		  WHERE name = $1;`,
+		name)
+
+	if err != nil {
+		fmt.Printf("can't delete from segments %v\n", err)
+		return err
+	}
+
+	return tx.Commit()
 }
 
 // CreateUser creates new user in database and returns new id
@@ -96,7 +126,8 @@ func (s *PostgresStore) UpdateUser(user User) error {
 					VALUES (
 					   (SELECT id FROM users WHERE id = $1),
 					   (SELECT id FROM segments WHERE name = $2)
-					);`, user.Id, name)
+					);`,
+			user.Id, name)
 		if err != nil {
 			fmt.Printf("can't append segment to user %v\n", err)
 		}
@@ -117,6 +148,39 @@ func (s *PostgresStore) UpdateUser(user User) error {
 }
 
 // GetUser gets user from database
-func (s *PostgresStore) GetUser(id int64) (*User, error) {
-	return nil, nil
+// TODO handle errors
+func (s *PostgresStore) GetUser(id int64) (User, error) {
+	user := User{
+		Id:             id,
+		AppendSegments: make([]string, 0),
+		DeleteSegments: make([]string, 0),
+	}
+
+	rows, err := s.db.Query(
+		`SELECT us.user_id, s.name
+				FROM user_segments us
+				JOIN segments s ON us.segment_id = s.id
+				WHERE us.user_id = $1;`,
+		user.Id)
+
+	if err != nil {
+		fmt.Printf("here %v\n", err)
+		return User{}, err
+	}
+
+	for rows.Next() {
+		var segment string
+		err = rows.Scan(&user.Id, &segment)
+		if err != nil {
+			fmt.Printf("can't get user-segment from storage %v\n", err)
+			continue
+		}
+		user.AppendSegments = append(user.AppendSegments, segment)
+	}
+
+	if rows.Err() != nil {
+		return User{}, rows.Err()
+	}
+
+	return user, nil
 }

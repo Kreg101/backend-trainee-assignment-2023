@@ -13,7 +13,7 @@ type Storage interface {
 	DeleteSegment(name string) error
 	CreateUser(int64) error
 	UpdateUser(user db.User) error
-	GetUser(id int64) (*db.User, error)
+	GetUser(id int64) (db.User, error)
 }
 
 type UserID struct {
@@ -46,7 +46,7 @@ func (s *HttpServer) Run() error {
 	e.DELETE("/segments", s.deleteSegment)
 	e.POST("/users", s.createUser)
 	e.PATCH("/users", s.updateUser)
-	e.GET("/user", s.getUser)
+	e.GET("/users", s.getUser)
 
 	return e.Start(s.listenAddr)
 }
@@ -73,7 +73,18 @@ func (s *HttpServer) createSegment(c echo.Context) error {
 
 // deleteSegment deletes existing segment
 func (s *HttpServer) deleteSegment(c echo.Context) error {
-	return nil
+	var segment Segment
+	err := c.Bind(&segment)
+	if err != nil {
+		return err
+	}
+
+	err = s.storage.DeleteSegment(segment.Name)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, segment)
 }
 
 // createUser creates new user and returns id
@@ -114,5 +125,16 @@ func (s *HttpServer) updateUser(c echo.Context) error {
 
 // getUser gets user by id
 func (s *HttpServer) getUser(c echo.Context) error {
-	return nil
+	var userID UserID
+	err := c.Bind(&userID)
+	if err != nil {
+		return err
+	}
+
+	user, err := s.storage.GetUser(userID.Id)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, user)
 }
