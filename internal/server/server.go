@@ -12,10 +12,12 @@ import (
 type Storage interface {
 	CreateSegment(name string) error
 	DeleteSegment(name string) error
-	CreateUser(int64) error
+	CheckSegment(name string) (bool, error)
+	CreateUser(id int64) error
 	AddSegmentsToUser(user db.User) error
 	DeleteSegmentsFromUser(user db.User) error
 	GetUser(id int64) (db.User, error)
+	CheckUser(id int64) (bool, error)
 }
 
 // Segment structure for json unmarshalling
@@ -60,19 +62,31 @@ func (s *HttpServer) createSegment(c echo.Context) error {
 	var segment Segment
 	err := c.Bind(&segment)
 	if err != nil {
-		s.logger.Info("can't unmarshal createSegment json", zap.Error(err))
+		s.logger.Info(zap.Error(err))
 		return c.JSON(http.StatusBadRequest, "can't unmarshal json")
 	}
 
+	// can't create segment with empty name
 	if segment.Name == "" {
-		s.logger.Info("invalid segment name in createSegment", zap.Error(err))
 		return c.JSON(http.StatusNotFound, "invalid segment name")
 	}
 
+	// check if segment already exists
+	exists, err := s.storage.CheckSegment(segment.Name)
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, "can't check segment existence")
+	}
+
+	if exists {
+		return c.JSON(http.StatusBadRequest, "segment already exists")
+	}
+
+	// create new segment
 	err = s.storage.CreateSegment(segment.Name)
 	if err != nil {
-		s.logger.Info("can't create segment", zap.Error(err))
-		return err
+		s.logger.Info(zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, "can't create segment")
 	}
 
 	return c.JSON(http.StatusCreated, segment)
@@ -83,15 +97,22 @@ func (s *HttpServer) deleteSegment(c echo.Context) error {
 	var segment Segment
 	err := c.Bind(&segment)
 	if err != nil {
-		s.logger.Info("can't unmarshal deleteSegment json", zap.Error(err))
+		s.logger.Info(zap.Error(err))
 		return c.JSON(http.StatusBadRequest, "can't unmarshal json")
 	}
 
-	if segment.Name == "" {
-		s.logger.Info("invalid segment name in deleteSegment")
-		return c.JSON(http.StatusNotFound, "invalid segment name")
+	// check that segment for removal exists
+	exists, err := s.storage.CheckSegment(segment.Name)
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, "can't check segment existence")
 	}
 
+	if !exists {
+		return c.JSON(http.StatusNotFound, "there is no segment with that name")
+	}
+
+	// delete segment
 	err = s.storage.DeleteSegment(segment.Name)
 	if err != nil {
 		return err
@@ -105,15 +126,27 @@ func (s *HttpServer) createUser(c echo.Context) error {
 	var user db.User
 	err := c.Bind(&user)
 	if err != nil {
-		s.logger.Info("can't unmarshal createUser json", zap.Error(err))
+		s.logger.Info(zap.Error(err))
 		return c.JSON(http.StatusBadRequest, "can't unmarshal json")
 	}
 
+	// can't create user with id <= 0
 	if user.Id <= 0 {
-		s.logger.Info("invalid user id in createUser")
 		return c.JSON(http.StatusNotFound, "invalid user id")
 	}
 
+	// check if user already exists
+	exists, err := s.storage.CheckUser(user.Id)
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, "can't check user existence")
+	}
+
+	if exists {
+		return c.JSON(http.StatusBadRequest, "user already exists")
+	}
+
+	// create new user
 	err = s.storage.CreateUser(user.Id)
 	if err != nil {
 		s.logger.Info("can't create user", zap.Error(err))
@@ -128,21 +161,46 @@ func (s *HttpServer) addSegmentsToUser(c echo.Context) error {
 	var user db.User
 	err := c.Bind(&user)
 	if err != nil {
-		s.logger.Info("can't unmarshal addSegmentsToUser json", zap.Error(err))
+		s.logger.Info(zap.Error(err))
 		return c.JSON(http.StatusBadRequest, "can't unmarshal json")
 	}
 
-	if user.Id <= 0 {
-		s.logger.Info("invalid user id in addSegmentsToUser")
-		return c.JSON(http.StatusNotFound, "invalid user id")
+	// check that user exists
+	exists, err := s.storage.CheckUser(user.Id)
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, "can't check user existence")
 	}
 
-	err = s.storage.AddSegmentsToUser(user)
+	if !exists {
+		return c.JSON(http.StatusNotFound, "user doesn't exist")
+	}
+
+	// correctUser is a user with segments that already exists
+	// we should add only existing segments
+	correctUser := db.User{
+		Id:         user.Id,
+		Segments:   make([]string, 0),
+		ActiveTime: user.ActiveTime,
+	}
+	for _, name := range user.Segments {
+		exists, err = s.storage.CheckSegment(name)
+		if err != nil {
+			s.logger.Info(zap.Error(err))
+			return c.JSON(http.StatusInternalServerError, "can't check segment existence")
+		}
+		if exists {
+			correctUser.Segments = append(correctUser.Segments, name)
+		}
+	}
+
+	// add existing segments to user
+	err = s.storage.AddSegmentsToUser(correctUser)
 	if err != nil {
 		return err
 	}
 
-	return c.JSON(http.StatusOK, user)
+	return c.JSON(http.StatusOK, correctUser)
 }
 
 // deleteSegmentsFromUser deletes segments from existing user
@@ -154,17 +212,42 @@ func (s *HttpServer) deleteSegmentsFromUser(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, "can't unmarshal json")
 	}
 
-	if user.Id <= 0 {
-		s.logger.Info("invalid user id in deleteSegmentsFromUser")
-		return c.JSON(http.StatusNotFound, "invalid user id")
+	// check that user exists
+	exists, err := s.storage.CheckUser(user.Id)
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, "can't check user existence")
 	}
 
-	err = s.storage.DeleteSegmentsFromUser(user)
+	if !exists {
+		return c.JSON(http.StatusNotFound, "user doesn't exist")
+	}
+
+	// correctUser is a user with segments that already exists
+	// we should delete only existing segments
+	correctUser := db.User{
+		Id:         user.Id,
+		Segments:   make([]string, 0),
+		ActiveTime: user.ActiveTime,
+	}
+	for _, name := range user.Segments {
+		exists, err = s.storage.CheckSegment(name)
+		if err != nil {
+			s.logger.Info(zap.Error(err))
+			return c.JSON(http.StatusInternalServerError, "can't check segment existence")
+		}
+		if exists {
+			correctUser.Segments = append(correctUser.Segments, name)
+		}
+	}
+
+	// delete existing segments
+	err = s.storage.DeleteSegmentsFromUser(correctUser)
 	if err != nil {
 		return err
 	}
 
-	return c.JSON(http.StatusOK, user)
+	return c.JSON(http.StatusOK, correctUser)
 }
 
 // getUser gets user from database by it's id
@@ -176,11 +259,18 @@ func (s *HttpServer) getUser(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, "can't unmarshal json")
 	}
 
-	if user.Id <= 0 {
-		s.logger.Info("invalid user id in getUser")
-		return c.JSON(http.StatusNotFound, "invalid user id")
+	// check that user exists
+	exists, err := s.storage.CheckUser(user.Id)
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, "can't check user existence")
 	}
 
+	if !exists {
+		return c.JSON(http.StatusNotFound, "user doesn't exist")
+	}
+
+	// get user's segments
 	user, err = s.storage.GetUser(user.Id)
 	if err != nil {
 		return err
