@@ -6,6 +6,8 @@ import (
 	"os"
 )
 
+// NewLogger initialize logger. Can set output.
+// TODO set logger level
 func NewLogger(f *os.File) *zap.SugaredLogger {
 	pe := zap.NewProductionEncoderConfig()
 	pe.TimeKey = "timestamp"

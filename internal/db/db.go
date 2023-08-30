@@ -4,14 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"go.uber.org/zap"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // User represents id and segments for adding, deleting, etc.
 type User struct {
-	Id       int64    `json:"id"`
-	Segments []string `json:"segments,omitempty"`
+	Id         int64    `json:"id"`
+	Segments   []string `json:"segments,omitempty"`
+	ActiveTime int64    `json:"active_time,omitempty"`
 }
 
 // PostgresStore implements server.Storage interface
@@ -22,11 +24,13 @@ type PostgresStore struct {
 
 // NewStorage creates and checks connection to database
 func NewStorage(config string, logger *zap.SugaredLogger) (*PostgresStore, error) {
+	// try to connect to database
 	conn, err := sql.Open("pgx", config)
 	if err != nil {
 		return nil, err
 	}
 
+	// check connection
 	err = conn.Ping()
 	if err != nil {
 		return nil, err
@@ -40,6 +44,8 @@ func NewStorage(config string, logger *zap.SugaredLogger) (*PostgresStore, error
 
 // Init creates tables for database
 func (s *PostgresStore) Init() error {
+
+	//use transactions for creating all tables
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		s.logger.Info("can't begin transaction", zap.Error(err))
@@ -47,6 +53,7 @@ func (s *PostgresStore) Init() error {
 	}
 	defer tx.Rollback()
 
+	// basic user table
 	_, err = tx.Exec(`CREATE TABLE IF NOT EXISTS users (
 	 id BIGINT UNIQUE
 	);`)
@@ -56,6 +63,8 @@ func (s *PostgresStore) Init() error {
 		return err
 	}
 
+	// segments table, every segment name has his own id for easier connection
+	// with user
 	_, err = tx.Exec(`CREATE TABLE IF NOT EXISTS segments  (
 	 id SERIAL PRIMARY KEY,
 	 name VARCHAR(50) UNIQUE NOT NULL
@@ -66,9 +75,15 @@ func (s *PostgresStore) Init() error {
 		return err
 	}
 
+	// user_segments table for connection users and segments
+	// time_in - the time the record was added to the database
+	// time_out - the time the record should be deleted from database
+	// time_out = NULL means it can only be removed manually
 	_, err = tx.Exec(`CREATE TABLE IF NOT EXISTS user_segments (
 	 user_id BIGINT NOT NULL,
 	 segment_id INT NOT NULL,
+	 time_in BIGINT NOT NULL,
+	 time_out BIGINT,
 	 PRIMARY KEY (user_id, segment_id),
 	 FOREIGN KEY (user_id) REFERENCES users(id),
 	 FOREIGN KEY (segment_id) REFERENCES segments(id)
@@ -85,6 +100,9 @@ func (s *PostgresStore) Init() error {
 		return err
 	}
 
+	// start ttl function for automatic removal
+	go s.ttl()
+
 	return nil
 }
 
@@ -96,6 +114,9 @@ func (s *PostgresStore) CreateSegment(name string) error {
 
 // DeleteSegment deletes segment from database
 func (s *PostgresStore) DeleteSegment(name string) error {
+
+	// use transactions because we need to delete segment from
+	// two different tables (segment, user_segment)
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		s.logger.Info("can't begin transaction", zap.Error(err))
@@ -142,14 +163,24 @@ func (s *PostgresStore) CreateUser(id int64) error {
 
 // AddSegmentsToUser appends segments to existing user in database
 func (s *PostgresStore) AddSegmentsToUser(user User) error {
+	deleteTime := new(int64)
+	now := time.Now().Unix()
+
+	// check that active time is valid
+	if user.ActiveTime > 0 {
+		*deleteTime = now + user.ActiveTime
+	} else {
+		deleteTime = nil
+	}
+
 	for _, name := range user.Segments {
 		_, err := s.db.Exec(
-			`INSERT INTO user_segments (user_id, segment_id)
+			`INSERT INTO user_segments (user_id, segment_id, time_in, time_out)
 					VALUES (
 					   (SELECT id FROM users WHERE id = $1),
-					   (SELECT id FROM segments WHERE name = $2)
-					);`,
-			user.Id, name)
+					   (SELECT id FROM segments WHERE name = $2),
+					   $3, $4);`,
+			user.Id, name, now, deleteTime)
 
 		if err != nil {
 			s.logger.Info("can't add segment to user", zap.Error(err))
@@ -211,4 +242,19 @@ func (s *PostgresStore) GetUser(id int64) (User, error) {
 	}
 
 	return user, nil
+}
+
+// ttl every 30 seconds finds expired records in user_segment database
+// and delete them
+func (s *PostgresStore) ttl() {
+	for range time.Tick(30 * time.Second) {
+		_, err := s.db.Exec(
+			`DELETE FROM user_segments 
+       						WHERE time_out IS NOT NULL AND time_out <= $1`,
+			time.Now().Unix())
+
+		if err != nil {
+			s.logger.Info("can't delete expired records", zap.Error(err))
+		}
+	}
 }

@@ -1,7 +1,6 @@
 package server
 
 import (
-	"errors"
 	"github.com/Kreg101/backend-trainee-assignment-2023/internal/db"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -9,7 +8,7 @@ import (
 	"net/http"
 )
 
-// Storage interface for store
+// Storage interface for store users and their segments
 type Storage interface {
 	CreateSegment(name string) error
 	DeleteSegment(name string) error
@@ -19,6 +18,7 @@ type Storage interface {
 	GetUser(id int64) (db.User, error)
 }
 
+// Segment structure for json unmarshalling
 type Segment struct {
 	Name string `json:"segment"`
 }
@@ -48,7 +48,7 @@ func (s *HttpServer) Run() error {
 	e.POST("/segments", s.createSegment)
 	e.DELETE("/segments", s.deleteSegment)
 	e.POST("/users", s.createUser)
-	e.POST("/users", s.addSegmentsToUser)
+	e.PATCH("/users", s.addSegmentsToUser)
 	e.DELETE("/users", s.deleteSegmentsFromUser)
 	e.GET("/users", s.getUser)
 
@@ -61,12 +61,12 @@ func (s *HttpServer) createSegment(c echo.Context) error {
 	err := c.Bind(&segment)
 	if err != nil {
 		s.logger.Info("can't unmarshal createSegment json", zap.Error(err))
-		return err
+		return c.JSON(http.StatusBadRequest, "can't unmarshal json")
 	}
 
 	if segment.Name == "" {
 		s.logger.Info("invalid segment name in createSegment", zap.Error(err))
-		return errors.New("invalid segment name")
+		return c.JSON(http.StatusNotFound, "invalid segment name")
 	}
 
 	err = s.storage.CreateSegment(segment.Name)
@@ -84,12 +84,12 @@ func (s *HttpServer) deleteSegment(c echo.Context) error {
 	err := c.Bind(&segment)
 	if err != nil {
 		s.logger.Info("can't unmarshal deleteSegment json", zap.Error(err))
-		return err
+		return c.JSON(http.StatusBadRequest, "can't unmarshal json")
 	}
 
 	if segment.Name == "" {
 		s.logger.Info("invalid segment name in deleteSegment")
-		return errors.New("invalid segment name")
+		return c.JSON(http.StatusNotFound, "invalid segment name")
 	}
 
 	err = s.storage.DeleteSegment(segment.Name)
@@ -100,18 +100,18 @@ func (s *HttpServer) deleteSegment(c echo.Context) error {
 	return c.JSON(http.StatusOK, segment)
 }
 
-// createUser creates new user and returns id
+// createUser creates new user
 func (s *HttpServer) createUser(c echo.Context) error {
 	var user db.User
 	err := c.Bind(&user)
 	if err != nil {
 		s.logger.Info("can't unmarshal createUser json", zap.Error(err))
-		return err
+		return c.JSON(http.StatusBadRequest, "can't unmarshal json")
 	}
 
 	if user.Id <= 0 {
 		s.logger.Info("invalid user id in createUser")
-		return errors.New("invalid user id")
+		return c.JSON(http.StatusNotFound, "invalid user id")
 	}
 
 	err = s.storage.CreateUser(user.Id)
@@ -129,12 +129,12 @@ func (s *HttpServer) addSegmentsToUser(c echo.Context) error {
 	err := c.Bind(&user)
 	if err != nil {
 		s.logger.Info("can't unmarshal addSegmentsToUser json", zap.Error(err))
-		return err
+		return c.JSON(http.StatusBadRequest, "can't unmarshal json")
 	}
 
 	if user.Id <= 0 {
 		s.logger.Info("invalid user id in addSegmentsToUser")
-		return errors.New("invalid user id")
+		return c.JSON(http.StatusNotFound, "invalid user id")
 	}
 
 	err = s.storage.AddSegmentsToUser(user)
@@ -151,12 +151,12 @@ func (s *HttpServer) deleteSegmentsFromUser(c echo.Context) error {
 	err := c.Bind(&user)
 	if err != nil {
 		s.logger.Info("can't unmarshal deleteSegmentsFromUser json", zap.Error(err))
-		return err
+		return c.JSON(http.StatusBadRequest, "can't unmarshal json")
 	}
 
 	if user.Id <= 0 {
 		s.logger.Info("invalid user id in deleteSegmentsFromUser")
-		return errors.New("invalid user id")
+		return c.JSON(http.StatusNotFound, "invalid user id")
 	}
 
 	err = s.storage.DeleteSegmentsFromUser(user)
@@ -167,18 +167,18 @@ func (s *HttpServer) deleteSegmentsFromUser(c echo.Context) error {
 	return c.JSON(http.StatusOK, user)
 }
 
-// getUser gets user by id
+// getUser gets user from database by it's id
 func (s *HttpServer) getUser(c echo.Context) error {
 	var user db.User
 	err := c.Bind(&user)
 	if err != nil {
 		s.logger.Info("can't unmarshal getUser json", zap.Error(err))
-		return err
+		return c.JSON(http.StatusBadRequest, "can't unmarshal json")
 	}
 
 	if user.Id <= 0 {
 		s.logger.Info("invalid user id in getUser")
-		return errors.New("invalid user id")
+		return c.JSON(http.StatusNotFound, "invalid user id")
 	}
 
 	user, err = s.storage.GetUser(user.Id)
@@ -189,6 +189,7 @@ func (s *HttpServer) getUser(c echo.Context) error {
 	return c.JSON(http.StatusOK, user)
 }
 
+// withLogging is middleware for logging
 func withLogging(e *echo.Echo, logger *zap.SugaredLogger) {
 	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
 		LogURI:    true,

@@ -42,11 +42,16 @@ func main() {
 }
 
 var (
+	// databaseDSN for connection to database
 	databaseDSN string
-	serverHost  = ":8080"
+
+	serverHost = ":8080"
+
+	// logFilePath store path for logger file
 	logFilePath string
 )
 
+// readEnv gets all needed information from environment variables
 func readEnv() {
 	databaseDSN = os.Getenv("DATABASE_DSN")
 	databaseDSN += fmt.Sprintf(" password=%s", os.Getenv("DATABASE_PASSWORD"))
