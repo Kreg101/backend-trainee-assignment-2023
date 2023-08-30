@@ -1,7 +1,6 @@
 package server
 
 import (
-	"errors"
 	"github.com/Kreg101/backend-trainee-assignment-2023/internal/db"
 	"github.com/labstack/echo/v4"
 	"net/http"
@@ -12,7 +11,8 @@ type Storage interface {
 	CreateSegment(name string) error
 	DeleteSegment(name string) error
 	CreateUser(int64) error
-	UpdateUser(user db.User) error
+	AddSegmentsToUser(user db.User) error
+	DeleteSegmentsFromUser(user db.User) error
 	GetUser(id int64) (db.User, error)
 }
 
@@ -45,7 +45,8 @@ func (s *HttpServer) Run() error {
 	e.POST("/segments", s.createSegment)
 	e.DELETE("/segments", s.deleteSegment)
 	e.POST("/users", s.createUser)
-	e.PATCH("/users", s.updateUser)
+	e.POST("/users", s.addSegmentsToUser)
+	e.DELETE("/users", s.deleteSegmentsFromUser)
 	e.GET("/users", s.getUser)
 
 	return e.Start(s.listenAddr)
@@ -57,10 +58,6 @@ func (s *HttpServer) createSegment(c echo.Context) error {
 	err := c.Bind(&segment)
 	if err != nil {
 		return err
-	}
-
-	if segment.Name == "" {
-		return errors.New("empty segment name")
 	}
 
 	err = s.storage.CreateSegment(segment.Name)
@@ -95,10 +92,6 @@ func (s *HttpServer) createUser(c echo.Context) error {
 		return err
 	}
 
-	if userID.Id <= 0 {
-		return errors.New("invalid id")
-	}
-
 	err = s.storage.CreateUser(userID.Id)
 	if err != nil {
 		return err
@@ -107,20 +100,36 @@ func (s *HttpServer) createUser(c echo.Context) error {
 	return c.JSON(http.StatusCreated, userID)
 }
 
-// updateUser update existing user and returns user with successful appended/deleted segments
-func (s *HttpServer) updateUser(c echo.Context) error {
-	var userUpdate db.User
-	err := c.Bind(&userUpdate)
+// addSegmentsToUser add segments to existing user
+func (s *HttpServer) addSegmentsToUser(c echo.Context) error {
+	var user db.User
+	err := c.Bind(&user)
 	if err != nil {
 		return err
 	}
 
-	err = s.storage.UpdateUser(userUpdate)
+	err = s.storage.AddSegmentsToUser(user)
 	if err != nil {
 		return err
 	}
 
-	return c.JSON(http.StatusOK, userUpdate)
+	return c.JSON(http.StatusOK, user)
+}
+
+// deleteSegmentsFromUser deletes segments from existing user
+func (s *HttpServer) deleteSegmentsFromUser(c echo.Context) error {
+	var user db.User
+	err := c.Bind(&user)
+	if err != nil {
+		return err
+	}
+
+	err = s.storage.DeleteSegmentsFromUser(user)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, user)
 }
 
 // getUser gets user by id
@@ -129,10 +138,6 @@ func (s *HttpServer) getUser(c echo.Context) error {
 	err := c.Bind(&userID)
 	if err != nil {
 		return err
-	}
-
-	if userID.Id <= 0 {
-		return errors.New("invalid id")
 	}
 
 	user, err := s.storage.GetUser(userID.Id)

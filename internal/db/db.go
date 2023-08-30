@@ -8,6 +8,12 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
+// User represents id and segments for adding, deleting, etc.
+type User struct {
+	Id       int64    `json:"id"`
+	Segments []string `json:"segments,omitempty"`
+}
+
 // PostgresStore implements server.Storage interface
 type PostgresStore struct {
 	db *sql.DB
@@ -117,10 +123,10 @@ func (s *PostgresStore) CreateUser(id int64) error {
 	return err
 }
 
-// UpdateUser updates existing user in database
+// AddSegmentsToUser appends segments to existing user in database
 // TODO handle errors
-func (s *PostgresStore) UpdateUser(user User) error {
-	for _, name := range user.AppendSegments {
+func (s *PostgresStore) AddSegmentsToUser(user User) error {
+	for _, name := range user.Segments {
 		_, err := s.db.Exec(
 			`INSERT INTO user_segments (user_id, segment_id)
 					VALUES (
@@ -133,7 +139,13 @@ func (s *PostgresStore) UpdateUser(user User) error {
 		}
 	}
 
-	for _, name := range user.DeleteSegments {
+	return nil
+}
+
+// DeleteSegmentsFromUser deletes segments from existing user in database
+// TODO handle errors
+func (s *PostgresStore) DeleteSegmentsFromUser(user User) error {
+	for _, name := range user.Segments {
 		_, err := s.db.Exec(
 			`DELETE FROM user_segments
 					WHERE user_id = (SELECT id FROM users WHERE id = $1)
@@ -151,9 +163,8 @@ func (s *PostgresStore) UpdateUser(user User) error {
 // TODO handle errors
 func (s *PostgresStore) GetUser(id int64) (User, error) {
 	user := User{
-		Id:             id,
-		AppendSegments: make([]string, 0),
-		DeleteSegments: make([]string, 0),
+		Id:       id,
+		Segments: make([]string, 0),
 	}
 
 	rows, err := s.db.Query(
@@ -164,7 +175,6 @@ func (s *PostgresStore) GetUser(id int64) (User, error) {
 		user.Id)
 
 	if err != nil {
-		fmt.Printf("here %v\n", err)
 		return User{}, err
 	}
 
@@ -175,7 +185,7 @@ func (s *PostgresStore) GetUser(id int64) (User, error) {
 			fmt.Printf("can't get user-segment from storage %v\n", err)
 			continue
 		}
-		user.AppendSegments = append(user.AppendSegments, segment)
+		user.Segments = append(user.Segments, segment)
 	}
 
 	if rows.Err() != nil {
