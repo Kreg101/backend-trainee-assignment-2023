@@ -11,6 +11,7 @@ services:
       - DATABASE_DSN=host=db user=postgres dbname=really sslmode=disable
       - SERVER_HOST=:8080
       - DATABASE_PASSWORD=Kravchenko01
+      - LOG_FILE_PATH=logfile
 
   db:
     restart: always

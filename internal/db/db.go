@@ -3,7 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
-	"fmt"
+	"go.uber.org/zap"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -16,11 +16,12 @@ type User struct {
 
 // PostgresStore implements server.Storage interface
 type PostgresStore struct {
-	db *sql.DB
+	db     *sql.DB
+	logger *zap.SugaredLogger
 }
 
 // NewStorage creates and checks connection to database
-func NewStorage(config string) (*PostgresStore, error) {
+func NewStorage(config string, logger *zap.SugaredLogger) (*PostgresStore, error) {
 	conn, err := sql.Open("pgx", config)
 	if err != nil {
 		return nil, err
@@ -32,7 +33,8 @@ func NewStorage(config string) (*PostgresStore, error) {
 	}
 
 	return &PostgresStore{
-		db: conn,
+		db:     conn,
+		logger: logger,
 	}, nil
 }
 
@@ -40,6 +42,7 @@ func NewStorage(config string) (*PostgresStore, error) {
 func (s *PostgresStore) Init() error {
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
+		s.logger.Info("can't begin transaction", zap.Error(err))
 		return err
 	}
 	defer tx.Rollback()
@@ -49,6 +52,7 @@ func (s *PostgresStore) Init() error {
 	);`)
 
 	if err != nil {
+		s.logger.Info("can't create users table", zap.Error(err))
 		return err
 	}
 
@@ -58,6 +62,7 @@ func (s *PostgresStore) Init() error {
 	);`)
 
 	if err != nil {
+		s.logger.Info("can't create segments table", zap.Error(err))
 		return err
 	}
 
@@ -70,10 +75,17 @@ func (s *PostgresStore) Init() error {
 	);`)
 
 	if err != nil {
+		s.logger.Info("can't create user_segments table", zap.Error(err))
 		return err
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		s.logger.Info("can't commit transaction in init", zap.Error(err))
+		return err
+	}
+
+	return nil
 }
 
 // CreateSegment creates new segment in database
@@ -83,10 +95,10 @@ func (s *PostgresStore) CreateSegment(name string) error {
 }
 
 // DeleteSegment deletes segment from database
-// TODO handle errors
 func (s *PostgresStore) DeleteSegment(name string) error {
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
+		s.logger.Info("can't begin transaction", zap.Error(err))
 		return err
 	}
 	defer tx.Rollback()
@@ -100,7 +112,7 @@ func (s *PostgresStore) DeleteSegment(name string) error {
 		name)
 
 	if err != nil {
-		fmt.Printf("can't delete from user_segments: %v\n", err)
+		s.logger.Info("can't delete segment from user_segments", zap.Error(err))
 		return err
 	}
 
@@ -110,11 +122,16 @@ func (s *PostgresStore) DeleteSegment(name string) error {
 		name)
 
 	if err != nil {
-		fmt.Printf("can't delete from segments %v\n", err)
+		s.logger.Info("can't delete from segments", zap.Error(err))
 		return err
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		s.logger.Info("can't commit in deleteSegment", zap.Error(err))
+	}
+
+	return nil
 }
 
 // CreateUser creates new user in database and returns new id
@@ -124,7 +141,6 @@ func (s *PostgresStore) CreateUser(id int64) error {
 }
 
 // AddSegmentsToUser appends segments to existing user in database
-// TODO handle errors
 func (s *PostgresStore) AddSegmentsToUser(user User) error {
 	for _, name := range user.Segments {
 		_, err := s.db.Exec(
@@ -134,8 +150,9 @@ func (s *PostgresStore) AddSegmentsToUser(user User) error {
 					   (SELECT id FROM segments WHERE name = $2)
 					);`,
 			user.Id, name)
+
 		if err != nil {
-			fmt.Printf("can't append segment to user %v\n", err)
+			s.logger.Info("can't add segment to user", zap.Error(err))
 		}
 	}
 
@@ -143,7 +160,6 @@ func (s *PostgresStore) AddSegmentsToUser(user User) error {
 }
 
 // DeleteSegmentsFromUser deletes segments from existing user in database
-// TODO handle errors
 func (s *PostgresStore) DeleteSegmentsFromUser(user User) error {
 	for _, name := range user.Segments {
 		_, err := s.db.Exec(
@@ -151,8 +167,9 @@ func (s *PostgresStore) DeleteSegmentsFromUser(user User) error {
 					WHERE user_id = (SELECT id FROM users WHERE id = $1)
 					AND segment_id = (SELECT id FROM segments WHERE name = $2);`,
 			user.Id, name)
+
 		if err != nil {
-			fmt.Printf("can't delete segment from user %v\n", err)
+			s.logger.Info("can't delete segment from user", zap.Error(err))
 		}
 	}
 
@@ -160,7 +177,6 @@ func (s *PostgresStore) DeleteSegmentsFromUser(user User) error {
 }
 
 // GetUser gets user from database
-// TODO handle errors
 func (s *PostgresStore) GetUser(id int64) (User, error) {
 	user := User{
 		Id:       id,
@@ -175,6 +191,7 @@ func (s *PostgresStore) GetUser(id int64) (User, error) {
 		user.Id)
 
 	if err != nil {
+		s.logger.Info("can't get correct response from db", zap.Error(err))
 		return User{}, err
 	}
 
@@ -182,13 +199,14 @@ func (s *PostgresStore) GetUser(id int64) (User, error) {
 		var segment string
 		err = rows.Scan(&user.Id, &segment)
 		if err != nil {
-			fmt.Printf("can't get user-segment from storage %v\n", err)
+			s.logger.Info("can't scan user-segment from storage", zap.Error(err))
 			continue
 		}
 		user.Segments = append(user.Segments, segment)
 	}
 
 	if rows.Err() != nil {
+		s.logger.Info("can't scan rows in getUser", zap.Error(err))
 		return User{}, rows.Err()
 	}
 
