@@ -54,7 +54,7 @@ var (
 // readEnv gets all needed information from environment variables
 func readEnv() {
 
-	// for example: host=db user=postgres dbname=postgres sslmode=disable
+	//for example: host=db user=postgres dbname=postgres sslmode=disable
 	databaseDSN = os.Getenv("DATABASE_DSN")
 
 	// for example: qwerty

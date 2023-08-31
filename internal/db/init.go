@@ -12,7 +12,7 @@ type PostgresStore struct {
 	logger *zap.SugaredLogger
 }
 
-// NewStorage creates and checks connection to database
+// NewStorage creates and checks connection to database Postgresql
 func NewStorage(config string, logger *zap.SugaredLogger) (*PostgresStore, error) {
 	// try to connect to database
 	conn, err := sql.Open("pgx", config)

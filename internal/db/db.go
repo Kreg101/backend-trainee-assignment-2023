@@ -43,7 +43,7 @@ func (s *PostgresStore) CreateSegment(segment server.Segment) error {
 		return err
 	}
 
-	// count users
+	// count all users
 	row := tx.QueryRow(`SELECT COUNT(*) FROM users`)
 	var all int64
 	err = row.Scan(&all)
