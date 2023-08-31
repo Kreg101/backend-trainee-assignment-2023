@@ -1,7 +1,6 @@
 package server
 
 import (
-	"fmt"
 	"github.com/gocarina/gocsv"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -61,6 +60,11 @@ func (s *HttpServer) createSegment(c echo.Context) error {
 	if err != nil {
 		s.logger.Info(zap.Error(err))
 		return c.JSON(http.StatusBadRequest, Msg{"can't unmarshal json"})
+	}
+
+	if segment.Name == "" {
+		s.logger.Info(zap.Error(err))
+		return c.JSON(http.StatusBadRequest, Msg{"invalid request"})
 	}
 
 	// create new segment
@@ -156,8 +160,6 @@ func (s *HttpServer) getUser(c echo.Context) error {
 		s.logger.Info(zap.Error(err))
 		return c.JSON(http.StatusBadRequest, Msg{"invalid user id"})
 	}
-
-	fmt.Println(id)
 
 	// it means db error
 	user, err := s.storage.GetUser(int64(id))
