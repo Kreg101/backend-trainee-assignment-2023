@@ -21,15 +21,18 @@ func TestHttpServer_createSegment(t *testing.T) {
 	tt := []struct {
 		name              string
 		request           string
-		segmentName       string
+		segment           Segment
 		wantToCallStorage bool
 		err               error
 		response          response
 	}{
 		{
-			name:              "OK",
-			request:           "{\"segment\":\"a\"}",
-			segmentName:       "a",
+			name:    "OK",
+			request: "{\"segment\":\"a\"}",
+			segment: Segment{
+				Name:        "a",
+				AutoPercent: 0,
+			},
 			wantToCallStorage: true,
 			err:               nil,
 			response: response{
@@ -38,9 +41,12 @@ func TestHttpServer_createSegment(t *testing.T) {
 			},
 		},
 		{
-			name:              "Invalid json #1",
-			request:           "{\"name\":\"a\"}",
-			segmentName:       "",
+			name:    "Invalid json #1",
+			request: "{\"name\":\"a\"}",
+			segment: Segment{
+				Name:        "",
+				AutoPercent: 0,
+			},
 			wantToCallStorage: false,
 			err:               nil,
 			response: response{
@@ -49,9 +55,12 @@ func TestHttpServer_createSegment(t *testing.T) {
 			},
 		},
 		{
-			name:              "Invalid json #2",
-			request:           "{\"name\":\"a",
-			segmentName:       "",
+			name:    "Invalid json #2",
+			request: "{\"name\":\"a",
+			segment: Segment{
+				Name:        "",
+				AutoPercent: 0,
+			},
 			wantToCallStorage: false,
 			err:               nil,
 			response: response{
@@ -60,9 +69,12 @@ func TestHttpServer_createSegment(t *testing.T) {
 			},
 		},
 		{
-			name:              "internal error",
-			request:           "{\"segment\":\"a\"}",
-			segmentName:       "a",
+			name:    "internal error",
+			request: "{\"segment\":\"a\"}",
+			segment: Segment{
+				Name:        "a",
+				AutoPercent: 0,
+			},
 			wantToCallStorage: true,
 			err:               errors.New(""),
 			response: response{
@@ -78,7 +90,7 @@ func TestHttpServer_createSegment(t *testing.T) {
 
 			storage := NewMockStorage(ctrl)
 			if tc.wantToCallStorage {
-				storage.EXPECT().CreateSegment(tc.segmentName).Return(tc.err)
+				storage.EXPECT().CreateSegment(tc.segment).Return(tc.err)
 			}
 
 			server := &HttpServer{

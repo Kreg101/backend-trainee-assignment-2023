@@ -48,17 +48,17 @@ func (mr *MockStorageMockRecorder) AddSegmentsToUser(user interface{}) *gomock.C
 }
 
 // CreateSegment mocks base method.
-func (m *MockStorage) CreateSegment(name string) error {
+func (m *MockStorage) CreateSegment(segment Segment) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateSegment", name)
+	ret := m.ctrl.Call(m, "CreateSegment", segment)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CreateSegment indicates an expected call of CreateSegment.
-func (mr *MockStorageMockRecorder) CreateSegment(name interface{}) *gomock.Call {
+func (mr *MockStorageMockRecorder) CreateSegment(segment interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSegment", reflect.TypeOf((*MockStorage)(nil).CreateSegment), name)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSegment", reflect.TypeOf((*MockStorage)(nil).CreateSegment), segment)
 }
 
 // CreateUser mocks base method.

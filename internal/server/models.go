@@ -16,10 +16,11 @@ type Msg struct {
 
 // Segment structure for json unmarshalling
 type Segment struct {
-	Name string `json:"segment"`
+	Name        string `json:"segment"`
+	AutoPercent int    `json:"auto_percent,omitempty"`
 }
 
-// TimeUser for history
+// TimeUser is user for history
 type TimeUser struct {
 	Id          int64
 	SegmentName string

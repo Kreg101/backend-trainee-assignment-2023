@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"github.com/Kreg101/backend-trainee-assignment-2023/internal/server"
 	"go.uber.org/zap"
 	"time"
@@ -121,18 +122,88 @@ func (s *PostgresStore) Init() error {
 }
 
 // CreateSegment creates new segment in database
-func (s *PostgresStore) CreateSegment(name string) error {
-	_, err := s.db.Exec(`INSERT INTO segments (name) VALUES ($1)`, name)
+func (s *PostgresStore) CreateSegment(segment server.Segment) error {
+	// check autoPercent validity
+	if segment.AutoPercent < 0 || segment.AutoPercent > 100 {
+		return errors.New("invalid percent")
+	}
+
+	// should we use auto addition?
+	if segment.AutoPercent == 0 {
+		_, err := s.db.Exec(`INSERT INTO segments (name) VALUES ($1)`, segment.Name)
+		if err != nil {
+			s.logger.Info(zap.Error(err))
+			return err
+		}
+		return nil
+	}
+
+	// begin transaction with auto addition
+	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		s.logger.Info(zap.Error(err))
 		return err
 	}
+	tx.Rollback()
+
+	// insert segment to database
+	_, err = tx.Exec(`INSERT INTO segments (name) VALUES ($1)`, segment.Name)
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return err
+	}
+
+	// count users
+	row := tx.QueryRow(`SELECT COUNT(*) FROM users`)
+	var all int64
+	if err = row.Scan(&all); err != nil {
+		s.logger.Info(zap.Error(err))
+		return err
+	}
+
+	// calculate amount of users to add segment to
+	count := (all * int64(segment.AutoPercent)) / 100
+
+	// get users id
+	rows, err := tx.Query(
+		`SELECT (id) FROM users
+			   ORDER BY RAND() LIMIT $1;`,
+		count)
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return err
+	}
+
+	// scan all users
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			s.logger.Info(zap.Error(err))
+			return err
+		}
+		ids = append(ids, id)
+	}
+
+	if row.Err() != nil {
+		s.logger.Info(zap.Error(err))
+		return row.Err()
+	}
+
+	// add user-segment to users_segments and user_segment_history database
+	for _, id := range ids {
+		err := dbAddUserSegment(tx, id, segment.Name, nil)
+		if err != nil {
+			s.logger.Info(zap.Error(err))
+			return err
+		}
+	}
+
 	return nil
 }
 
 // DeleteSegment deletes segment by it's name 	from database
 func (s *PostgresStore) DeleteSegment(name string) error {
-
 	// use transactions because we need to delete segment from
 	// two different tables (segment, user_segment)
 	tx, err := s.db.BeginTx(context.Background(), nil)
@@ -142,6 +213,7 @@ func (s *PostgresStore) DeleteSegment(name string) error {
 	}
 	defer tx.Rollback()
 
+	// delete segments from user_segments
 	_, err = tx.Exec(
 		`DELETE FROM user_segments WHERE segment_id IN (
 			   SELECT id FROM segments WHERE name = $1);`,
@@ -152,6 +224,23 @@ func (s *PostgresStore) DeleteSegment(name string) error {
 		return err
 	}
 
+	// TODO: solve bug
+
+	// update history connected to this segment
+	_, err = tx.Exec(
+		`UPDATE user_segment_history 
+               SET time_removed = $1
+               WHERE time_removed > $2 AND
+               segment_id = (SELECT id FROM segments WHERE name = $3
+			  );`,
+		time.Now().Unix(), time.Now().Unix(), name)
+
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return err
+	}
+
+	// delete segment from user
 	_, err = tx.Exec(
 		`DELETE FROM segments WHERE name = $1;`,
 		name)
@@ -192,6 +281,7 @@ func (s *PostgresStore) AddSegmentsToUser(user server.User) error {
 		deleteTime = nil
 	}
 
+	// begin transaction
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		s.logger.Info(zap.Error(err))
@@ -199,24 +289,9 @@ func (s *PostgresStore) AddSegmentsToUser(user server.User) error {
 	}
 	defer tx.Rollback()
 
+	// add all user-segment pairs
 	for _, name := range user.Segments {
-		_, err := tx.Exec(
-			`INSERT INTO user_segments (user_id, segment_id, time_in, time_out)
-				   VALUES (
-				   (SELECT id FROM users WHERE id = $1),
-				   (SELECT id FROM segments WHERE name = $2), $3, $4);`,
-			user.Id, name, now, deleteTime)
-
-		if err != nil {
-			s.logger.Info(zap.Error(err))
-			return err
-		}
-
-		_, err = tx.Exec(
-			`INSERT INTO user_segment_history (user_id, segment_id, time_added, time_removed)
-				   VALUES ($1, (SELECT id FROM segments WHERE name = $2), $3, $4)`,
-			user.Id, name, now, deleteTime)
-
+		err := dbAddUserSegment(tx, user.Id, name, deleteTime)
 		if err != nil {
 			s.logger.Info(zap.Error(err))
 			return err
@@ -241,7 +316,10 @@ func (s *PostgresStore) DeleteSegmentsFromUser(user server.User) error {
 	}
 	defer tx.Rollback()
 
+	// delete all user-segment pairs
 	for _, name := range user.Segments {
+
+		// delete from user_segment table
 		_, err := tx.Exec(
 			`DELETE FROM user_segments
 				   WHERE user_id = (SELECT id FROM users WHERE id = $1)
@@ -253,6 +331,7 @@ func (s *PostgresStore) DeleteSegmentsFromUser(user server.User) error {
 			return err
 		}
 
+		// update history
 		_, err = tx.Exec(
 			`UPDATE user_segment_history 
 				   SET time_removed = $1
@@ -289,6 +368,7 @@ func (s *PostgresStore) GetUser(id int64) (*server.User, error) {
 	}
 	defer tx.Rollback()
 
+	// check that user exists
 	row := tx.QueryRow(
 		`SELECT EXISTS ( SELECT 1 FROM users
      	       WHERE id = $1) AS user_exists;`, id)
@@ -300,10 +380,12 @@ func (s *PostgresStore) GetUser(id int64) (*server.User, error) {
 		return nil, err
 	}
 
+	// if it doesn't exist it's NotFount
 	if !exists {
 		return nil, nil
 	}
 
+	// get all pairs
 	rows, err := tx.Query(
 		`SELECT us.user_id, s.name
 			   FROM user_segments us
@@ -316,6 +398,7 @@ func (s *PostgresStore) GetUser(id int64) (*server.User, error) {
 		return nil, err
 	}
 
+	// scan all pairs
 	for rows.Next() {
 		var segment string
 		err = rows.Scan(&user.Id, &segment)
@@ -326,6 +409,7 @@ func (s *PostgresStore) GetUser(id int64) (*server.User, error) {
 		user.Segments = append(user.Segments, segment)
 	}
 
+	// check error
 	if rows.Err() != nil {
 		s.logger.Info(zap.Error(err))
 		return nil, rows.Err()
@@ -342,6 +426,7 @@ func (s *PostgresStore) GetUserHistory(user server.User) ([]server.TimeUser, err
 	start := firstOfMonth.Unix()
 	end := lastOfMonth.Unix()
 
+	// get (id, segment_name, time_in, time_out) user from start to end
 	rows, err := s.db.Query(
 		`SELECT ush.user_id, s.name AS segment_name, ush.time_added, ush.time_removed
 			   FROM user_segment_history ush
@@ -356,6 +441,7 @@ func (s *PostgresStore) GetUserHistory(user server.User) ([]server.TimeUser, err
 
 	history := make([]server.TimeUser, 0)
 
+	// scan all rows
 	for rows.Next() {
 		var tu server.TimeUser
 
@@ -392,4 +478,29 @@ func (s *PostgresStore) ttl() {
 			s.logger.Info(zap.Error(err))
 		}
 	}
+}
+
+// dbAddUserSegment for adding user-segment pair to both tables
+func dbAddUserSegment(tx *sql.Tx, id int64, name string, deleteTime *int64) error {
+	_, err := tx.Exec(
+		`INSERT INTO user_segments (user_id, segment_id, time_in, time_out)
+				   VALUES (
+				   (SELECT id FROM users WHERE id = $1),
+				   (SELECT id FROM segments WHERE name = $2), $3, $4);`,
+		id, name, time.Now().Unix(), deleteTime)
+
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(
+		`INSERT INTO user_segment_history (user_id, segment_id, time_added, time_removed)
+				   VALUES ($1, (SELECT id FROM segments WHERE name = $2), $3, $4)`,
+		id, name, time.Now().Unix(), deleteTime)
+
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

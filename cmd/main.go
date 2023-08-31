@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"github.com/Kreg101/backend-trainee-assignment-2023/internal/db"
 	"github.com/Kreg101/backend-trainee-assignment-2023/internal/logger"
 	"github.com/Kreg101/backend-trainee-assignment-2023/internal/server"
@@ -53,8 +52,9 @@ var (
 
 // readEnv gets all needed information from environment variables
 func readEnv() {
-	databaseDSN = os.Getenv("DATABASE_DSN")
-	databaseDSN += fmt.Sprintf(" password=%s", os.Getenv("DATABASE_PASSWORD"))
+	//databaseDSN = os.Getenv("DATABASE_DSN")
+	//databaseDSN += fmt.Sprintf(" password=%s", os.Getenv("DATABASE_PASSWORD"))
+	databaseDSN = "host=localhost user=postgres password=Kravchenko01 dbname=postgres sslmode=disable"
 
 	if envServerHost := os.Getenv("SERVER_HOST"); envServerHost != "" {
 		serverHost = envServerHost
