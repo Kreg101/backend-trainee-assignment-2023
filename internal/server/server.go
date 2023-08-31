@@ -1,11 +1,13 @@
 package server
 
 import (
-	"github.com/Kreg101/backend-trainee-assignment-2023/internal/db"
+	"fmt"
+	"github.com/gocarina/gocsv"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"go.uber.org/zap"
 	"net/http"
+	"strconv"
 )
 
 // Storage interface for store users and their segments
@@ -13,19 +15,10 @@ type Storage interface {
 	CreateSegment(name string) error
 	DeleteSegment(name string) error
 	CreateUser(id int64) error
-	AddSegmentsToUser(user db.User) error
-	DeleteSegmentsFromUser(user db.User) error
-	GetUser(id int64) (*db.User, error)
-}
-
-// Msg represents description of problem in request
-type Msg struct {
-	Text string `json:"text"`
-}
-
-// Segment structure for json unmarshalling
-type Segment struct {
-	Name string `json:"segment"`
+	AddSegmentsToUser(user User) error
+	DeleteSegmentsFromUser(user User) error
+	GetUser(id int64) (*User, error)
+	GetUserHistory(user User) ([]TimeUser, error)
 }
 
 // HttpServer connects database with http requests
@@ -55,7 +48,8 @@ func (s *HttpServer) Run() error {
 	e.POST("/users", s.createUser)
 	e.PATCH("/users", s.addSegmentsToUser)
 	e.DELETE("/users", s.deleteSegmentsFromUser)
-	e.GET("/users", s.getUser)
+	e.GET("/users/:id", s.getUser)
+	e.GET("/users/:id/history", s.userHistory)
 
 	return e.Start(s.listenAddr)
 }
@@ -100,7 +94,7 @@ func (s *HttpServer) deleteSegment(c echo.Context) error {
 
 // createUser creates new user
 func (s *HttpServer) createUser(c echo.Context) error {
-	var user db.User
+	var user User
 	err := c.Bind(&user)
 	if err != nil {
 		s.logger.Info(zap.Error(err))
@@ -119,7 +113,7 @@ func (s *HttpServer) createUser(c echo.Context) error {
 
 // addSegmentsToUser add segments to existing user
 func (s *HttpServer) addSegmentsToUser(c echo.Context) error {
-	var user db.User
+	var user User
 	err := c.Bind(&user)
 	if err != nil {
 		s.logger.Info(zap.Error(err))
@@ -138,7 +132,7 @@ func (s *HttpServer) addSegmentsToUser(c echo.Context) error {
 
 // deleteSegmentsFromUser deletes segments from existing user
 func (s *HttpServer) deleteSegmentsFromUser(c echo.Context) error {
-	var user db.User
+	var user User
 	err := c.Bind(&user)
 	if err != nil {
 		s.logger.Info(zap.Error(err))
@@ -157,24 +151,65 @@ func (s *HttpServer) deleteSegmentsFromUser(c echo.Context) error {
 
 // getUser gets user from database by it's id
 func (s *HttpServer) getUser(c echo.Context) error {
-	var user db.User
-	err := c.Bind(&user)
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		s.logger.Info(zap.Error(err))
-		return c.JSON(http.StatusBadRequest, Msg{"can't unmarshal json"})
+		return c.JSON(http.StatusBadRequest, Msg{"invalid user id"})
 	}
 
-	retUser, err := s.storage.GetUser(user.Id)
+	fmt.Println(id)
+
+	// it means db error
+	user, err := s.storage.GetUser(int64(id))
 	if err != nil {
 		s.logger.Info(zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, Msg{"can't get user"})
 	}
 
-	if retUser == nil {
+	// it means user doesn't exist
+	if user == nil {
 		return c.JSON(http.StatusNotFound, Msg{"user doesn't exists"})
 	}
 
-	return c.JSON(http.StatusOK, *retUser)
+	return c.JSON(http.StatusOK, *user)
+}
+
+// userHistory returns csv file with history of user-segment relationships
+// in specified year and month
+func (s *HttpServer) userHistory(c echo.Context) error {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return c.JSON(http.StatusBadRequest, Msg{"invalid user id"})
+	}
+
+	year, err := strconv.Atoi(c.QueryParam("year"))
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return c.JSON(http.StatusBadRequest, Msg{"invalid year"})
+	}
+
+	month, err := strconv.Atoi(c.QueryParam("month"))
+	if err != nil || month < 1 || month > 12 {
+		s.logger.Info(zap.Error(err))
+		return c.JSON(http.StatusBadRequest, Msg{"invalid month"})
+	}
+
+	user := User{Id: int64(id), Year: year, Month: month}
+	history, err := s.storage.GetUserHistory(user)
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, Msg{"can't get user's history"})
+	}
+
+	c.Response().Unwrap().Header().Set("Content-Disposition", "attachment; filename=test.csv")
+	err = gocsv.Marshal(history, c.Response().Unwrap())
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, Msg{"can't marshal history to json"})
+	}
+
+	return nil
 }
 
 // withLogging is middleware for logging

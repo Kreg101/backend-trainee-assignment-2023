@@ -3,18 +3,12 @@ package db
 import (
 	"context"
 	"database/sql"
+	"github.com/Kreg101/backend-trainee-assignment-2023/internal/server"
 	"go.uber.org/zap"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
-
-// User represents id and segments for adding, deleting, etc.
-type User struct {
-	Id         int64    `json:"id"`
-	Segments   []string `json:"segments,omitempty"`
-	ActiveTime int64    `json:"active_time,omitempty"`
-}
 
 // PostgresStore implements server.Storage interface
 type PostgresStore struct {
@@ -129,7 +123,11 @@ func (s *PostgresStore) Init() error {
 // CreateSegment creates new segment in database
 func (s *PostgresStore) CreateSegment(name string) error {
 	_, err := s.db.Exec(`INSERT INTO segments (name) VALUES ($1)`, name)
-	return err
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return err
+	}
+	return nil
 }
 
 // DeleteSegment deletes segment by it's name 	from database
@@ -166,6 +164,7 @@ func (s *PostgresStore) DeleteSegment(name string) error {
 	err = tx.Commit()
 	if err != nil {
 		s.logger.Info(zap.Error(err))
+		return err
 	}
 
 	return nil
@@ -174,11 +173,15 @@ func (s *PostgresStore) DeleteSegment(name string) error {
 // CreateUser creates new user in database and returns new id
 func (s *PostgresStore) CreateUser(id int64) error {
 	_, err := s.db.Exec(`INSERT INTO users (id) VALUES ($1);`, id)
-	return err
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return err
+	}
+	return nil
 }
 
 // AddSegmentsToUser appends segments to existing user in database
-func (s *PostgresStore) AddSegmentsToUser(user User) error {
+func (s *PostgresStore) AddSegmentsToUser(user server.User) error {
 	deleteTime := new(int64)
 	now := time.Now().Unix()
 
@@ -197,7 +200,6 @@ func (s *PostgresStore) AddSegmentsToUser(user User) error {
 	defer tx.Rollback()
 
 	for _, name := range user.Segments {
-
 		_, err := tx.Exec(
 			`INSERT INTO user_segments (user_id, segment_id, time_in, time_out)
 				   VALUES (
@@ -231,7 +233,7 @@ func (s *PostgresStore) AddSegmentsToUser(user User) error {
 }
 
 // DeleteSegmentsFromUser deletes segments from existing user in database
-func (s *PostgresStore) DeleteSegmentsFromUser(user User) error {
+func (s *PostgresStore) DeleteSegmentsFromUser(user server.User) error {
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		s.logger.Info(zap.Error(err))
@@ -275,9 +277,10 @@ func (s *PostgresStore) DeleteSegmentsFromUser(user User) error {
 	return nil
 }
 
-// GetUser gets user from database
-func (s *PostgresStore) GetUser(id int64) (*User, error) {
-	user := &User{Id: id, Segments: make([]string, 0)}
+// GetUser gets user from database. If user is in database, it returns (*User, nil).
+// If error happened, it returns (nil, error). If user isn't in db, it returns (nil, nil).
+func (s *PostgresStore) GetUser(id int64) (*server.User, error) {
+	user := &server.User{Id: id, Segments: make([]string, 0)}
 
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
@@ -286,7 +289,7 @@ func (s *PostgresStore) GetUser(id int64) (*User, error) {
 	}
 	defer tx.Rollback()
 
-	row := s.db.QueryRow(
+	row := tx.QueryRow(
 		`SELECT EXISTS ( SELECT 1 FROM users
      	       WHERE id = $1) AS user_exists;`, id)
 
@@ -301,7 +304,7 @@ func (s *PostgresStore) GetUser(id int64) (*User, error) {
 		return nil, nil
 	}
 
-	rows, err := s.db.Query(
+	rows, err := tx.Query(
 		`SELECT us.user_id, s.name
 			   FROM user_segments us
 			   JOIN segments s ON us.segment_id = s.id
@@ -329,6 +332,51 @@ func (s *PostgresStore) GetUser(id int64) (*User, error) {
 	}
 
 	return user, nil
+}
+
+func (s *PostgresStore) GetUserHistory(user server.User) ([]server.TimeUser, error) {
+	firstOfMonth := time.Date(user.Year, time.Month(user.Month), 0, 0, 0, 0, 0, time.UTC)
+
+	// should be careful with +- 1 days, so longer not shorter
+	lastOfMonth := firstOfMonth.AddDate(0, 1, 1)
+	start := firstOfMonth.Unix()
+	end := lastOfMonth.Unix()
+
+	rows, err := s.db.Query(
+		`SELECT ush.user_id, s.name AS segment_name, ush.time_added, ush.time_removed
+			   FROM user_segment_history ush
+			   JOIN segments s ON s.id = ush.segment_id
+			   WHERE ush.user_id = $1 AND ush.time_added > $2 AND ush.time_removed < $3`,
+		user.Id, start, end)
+
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return nil, err
+	}
+
+	history := make([]server.TimeUser, 0)
+
+	for rows.Next() {
+		var tu server.TimeUser
+
+		err := rows.Scan(&tu.Id, &tu.SegmentName, &start, &end)
+		if err != nil {
+			s.logger.Info(zap.Error(err))
+			return nil, err
+		}
+
+		tu.TimeIn = time.Unix(start, 0).String()
+		tu.TimeOut = time.Unix(end, 0).String()
+
+		history = append(history, tu)
+	}
+
+	if rows.Err() != nil {
+		s.logger.Info(zap.Error(rows.Err()))
+		return nil, err
+	}
+
+	return history, nil
 }
 
 // ttl every 30 seconds finds expired records in user_segment database
