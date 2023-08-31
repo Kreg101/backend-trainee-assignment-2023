@@ -97,11 +97,10 @@ func (s *PostgresStore) Init() error {
 	_, err = tx.Exec(
 		`CREATE TABLE IF NOT EXISTS user_segment_history (
 	   	   user_id BIGINT NOT NULL,
-	       segment_id INT NOT NULL,
+	       segment_name VARCHAR(50) NOT NULL,
 	       time_added BIGINT NOT NULL,
 	       time_removed BIGINT,
-	       FOREIGN KEY (user_id) REFERENCES users(id),
-	       FOREIGN KEY (segment_id) REFERENCES segments(id)
+	       FOREIGN KEY (user_id) REFERENCES users(id)
 	  );`)
 
 	if err != nil {
@@ -144,7 +143,7 @@ func (s *PostgresStore) CreateSegment(segment server.Segment) error {
 		s.logger.Info(zap.Error(err))
 		return err
 	}
-	tx.Rollback()
+	defer tx.Rollback()
 
 	// insert segment to database
 	_, err = tx.Exec(`INSERT INTO segments (name) VALUES ($1)`, segment.Name)
@@ -156,7 +155,8 @@ func (s *PostgresStore) CreateSegment(segment server.Segment) error {
 	// count users
 	row := tx.QueryRow(`SELECT COUNT(*) FROM users`)
 	var all int64
-	if err = row.Scan(&all); err != nil {
+	err = row.Scan(&all)
+	if err != nil {
 		s.logger.Info(zap.Error(err))
 		return err
 	}
@@ -167,7 +167,7 @@ func (s *PostgresStore) CreateSegment(segment server.Segment) error {
 	// get users id
 	rows, err := tx.Query(
 		`SELECT (id) FROM users
-			   ORDER BY RAND() LIMIT $1;`,
+			   ORDER BY RANDOM() LIMIT $1;`,
 		count)
 	if err != nil {
 		s.logger.Info(zap.Error(err))
@@ -199,6 +199,12 @@ func (s *PostgresStore) CreateSegment(segment server.Segment) error {
 		}
 	}
 
+	err = tx.Commit()
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return err
+	}
+
 	return nil
 }
 
@@ -215,8 +221,8 @@ func (s *PostgresStore) DeleteSegment(name string) error {
 
 	// delete segments from user_segments
 	_, err = tx.Exec(
-		`DELETE FROM user_segments WHERE segment_id IN (
-			   SELECT id FROM segments WHERE name = $1);`,
+		`DELETE FROM user_segments WHERE segment_id IN 
+              (SELECT id FROM segments WHERE name = $1);`,
 		name)
 
 	if err != nil {
@@ -224,15 +230,13 @@ func (s *PostgresStore) DeleteSegment(name string) error {
 		return err
 	}
 
-	// TODO: solve bug
-
 	// update history connected to this segment
 	_, err = tx.Exec(
 		`UPDATE user_segment_history 
                SET time_removed = $1
-               WHERE time_removed > $2 AND
-               segment_id = (SELECT id FROM segments WHERE name = $3
-			  );`,
+               WHERE (time_removed > $2 OR time_removed IS NULL) AND
+               segment_name = $3
+			  ;`,
 		time.Now().Unix(), time.Now().Unix(), name)
 
 	if err != nil {
@@ -336,9 +340,8 @@ func (s *PostgresStore) DeleteSegmentsFromUser(user server.User) error {
 			`UPDATE user_segment_history 
 				   SET time_removed = $1
                    WHERE user_id = $2
-                   AND segment_id = (SELECT id FROM segments
-                   WHERE name = $3
-				   );`,
+                   AND segment_name = $3
+				   ;`,
 			time.Now().Unix(), user.Id, name)
 
 		if err != nil {
@@ -428,9 +431,8 @@ func (s *PostgresStore) GetUserHistory(user server.User) ([]server.TimeUser, err
 
 	// get (id, segment_name, time_in, time_out) user from start to end
 	rows, err := s.db.Query(
-		`SELECT ush.user_id, s.name AS segment_name, ush.time_added, ush.time_removed
+		`SELECT ush.user_id, ush.segment_name, ush.time_added, ush.time_removed
 			   FROM user_segment_history ush
-			   JOIN segments s ON s.id = ush.segment_id
 			   WHERE ush.user_id = $1 AND ush.time_added > $2 AND ush.time_removed < $3`,
 		user.Id, start, end)
 
@@ -482,6 +484,7 @@ func (s *PostgresStore) ttl() {
 
 // dbAddUserSegment for adding user-segment pair to both tables
 func dbAddUserSegment(tx *sql.Tx, id int64, name string, deleteTime *int64) error {
+	// add user-segment pair to user_segments table
 	_, err := tx.Exec(
 		`INSERT INTO user_segments (user_id, segment_id, time_in, time_out)
 				   VALUES (
@@ -493,9 +496,10 @@ func dbAddUserSegment(tx *sql.Tx, id int64, name string, deleteTime *int64) erro
 		return err
 	}
 
+	// add user-segment pair to history table
 	_, err = tx.Exec(
-		`INSERT INTO user_segment_history (user_id, segment_id, time_added, time_removed)
-				   VALUES ($1, (SELECT id FROM segments WHERE name = $2), $3, $4)`,
+		`INSERT INTO user_segment_history (user_id, segment_name, time_added, time_removed)
+				VALUES ($1, $2, $3, $4)`,
 		id, name, time.Now().Unix(), deleteTime)
 
 	if err != nil {
