@@ -3,6 +3,7 @@ module github.com/Kreg101/backend-trainee-assignment-2023
 go 1.20
 
 require (
+	github.com/gocarina/gocsv v0.0.0-20230616125104-99d496ca653d
 	github.com/golang/mock v1.6.0
 	github.com/jackc/pgx/v5 v5.4.3
 	github.com/labstack/echo/v4 v4.11.1
@@ -12,7 +13,6 @@ require (
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/gocarina/gocsv v0.0.0-20230616125104-99d496ca653d // indirect
 	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20221227161230-091c0ba34f0a // indirect
