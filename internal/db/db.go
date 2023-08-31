@@ -48,7 +48,7 @@ func (s *PostgresStore) Init() error {
 	//use transactions for creating all tables
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
-		s.logger.Info("can't begin transaction", zap.Error(err))
+		s.logger.Info(zap.Error(err))
 		return err
 	}
 	defer tx.Rollback()
@@ -56,11 +56,11 @@ func (s *PostgresStore) Init() error {
 	// basic user table
 	_, err = tx.Exec(
 		`CREATE TABLE IF NOT EXISTS users (
-		   id BIGINT UNIQUE
+		   id BIGINT UNIQUE CHECK (id > 0)
 	);`)
 
 	if err != nil {
-		s.logger.Info("can't create users table", zap.Error(err))
+		s.logger.Info(zap.Error(err))
 		return err
 	}
 
@@ -73,7 +73,7 @@ func (s *PostgresStore) Init() error {
 	);`)
 
 	if err != nil {
-		s.logger.Info("can't create segments table", zap.Error(err))
+		s.logger.Info(zap.Error(err))
 		return err
 	}
 
@@ -93,7 +93,7 @@ func (s *PostgresStore) Init() error {
 	);`)
 
 	if err != nil {
-		s.logger.Info("can't create user_segments table", zap.Error(err))
+		s.logger.Info(zap.Error(err))
 		return err
 	}
 
@@ -110,13 +110,13 @@ func (s *PostgresStore) Init() error {
 	  );`)
 
 	if err != nil {
-		s.logger.Info("can't create user_segment_history table", zap.Error(err))
+		s.logger.Info(zap.Error(err))
 		return err
 	}
 
 	err = tx.Commit()
 	if err != nil {
-		s.logger.Info("can't commit transaction in init", zap.Error(err))
+		s.logger.Info(zap.Error(err))
 		return err
 	}
 
@@ -139,7 +139,7 @@ func (s *PostgresStore) DeleteSegment(name string) error {
 	// two different tables (segment, user_segment)
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
-		s.logger.Info("can't begin transaction", zap.Error(err))
+		s.logger.Info(zap.Error(err))
 		return err
 	}
 	defer tx.Rollback()
@@ -150,7 +150,7 @@ func (s *PostgresStore) DeleteSegment(name string) error {
 		name)
 
 	if err != nil {
-		s.logger.Info("can't delete segment from user_segments", zap.Error(err))
+		s.logger.Info(zap.Error(err))
 		return err
 	}
 
@@ -159,32 +159,16 @@ func (s *PostgresStore) DeleteSegment(name string) error {
 		name)
 
 	if err != nil {
-		s.logger.Info("can't delete from segments", zap.Error(err))
+		s.logger.Info(zap.Error(err))
 		return err
 	}
 
 	err = tx.Commit()
 	if err != nil {
-		s.logger.Info("can't commit in deleteSegment", zap.Error(err))
+		s.logger.Info(zap.Error(err))
 	}
 
 	return nil
-}
-
-func (s *PostgresStore) CheckSegment(name string) (bool, error) {
-	row := s.db.QueryRow(
-		`SELECT EXISTS (SELECT 1 FROM segments 
-               WHERE name = $1) AS segment_exists;`,
-		name)
-
-	var res bool
-	err := row.Scan(&res)
-	if err != nil {
-		s.logger.Info("can't scan segment_exists", zap.Error(err))
-		return false, err
-	}
-
-	return res, nil
 }
 
 // CreateUser creates new user in database and returns new id
@@ -205,8 +189,16 @@ func (s *PostgresStore) AddSegmentsToUser(user User) error {
 		deleteTime = nil
 	}
 
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return err
+	}
+	defer tx.Rollback()
+
 	for _, name := range user.Segments {
-		_, err := s.db.Exec(
+
+		_, err := tx.Exec(
 			`INSERT INTO user_segments (user_id, segment_id, time_in, time_out)
 				   VALUES (
 				   (SELECT id FROM users WHERE id = $1),
@@ -214,18 +206,25 @@ func (s *PostgresStore) AddSegmentsToUser(user User) error {
 			user.Id, name, now, deleteTime)
 
 		if err != nil {
-			s.logger.Info("can't add segment to user", zap.Error(err))
-			continue
+			s.logger.Info(zap.Error(err))
+			return err
 		}
 
-		_, err = s.db.Exec(
+		_, err = tx.Exec(
 			`INSERT INTO user_segment_history (user_id, segment_id, time_added, time_removed)
 				   VALUES ($1, (SELECT id FROM segments WHERE name = $2), $3, $4)`,
 			user.Id, name, now, deleteTime)
 
 		if err != nil {
-			s.logger.Info("can't add user-segment to history", zap.Error(err))
+			s.logger.Info(zap.Error(err))
+			return err
 		}
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return err
 	}
 
 	return nil
@@ -233,19 +232,26 @@ func (s *PostgresStore) AddSegmentsToUser(user User) error {
 
 // DeleteSegmentsFromUser deletes segments from existing user in database
 func (s *PostgresStore) DeleteSegmentsFromUser(user User) error {
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return err
+	}
+	defer tx.Rollback()
+
 	for _, name := range user.Segments {
-		_, err := s.db.Exec(
+		_, err := tx.Exec(
 			`DELETE FROM user_segments
 				   WHERE user_id = (SELECT id FROM users WHERE id = $1)
 				   AND segment_id = (SELECT id FROM segments WHERE name = $2);`,
 			user.Id, name)
 
 		if err != nil {
-			s.logger.Info("can't delete segment from user", zap.Error(err))
-			continue
+			s.logger.Info(zap.Error(err))
+			return err
 		}
 
-		_, err = s.db.Exec(
+		_, err = tx.Exec(
 			`UPDATE user_segment_history 
 				   SET time_removed = $1
                    WHERE user_id = $2
@@ -255,18 +261,44 @@ func (s *PostgresStore) DeleteSegmentsFromUser(user User) error {
 			time.Now().Unix(), user.Id, name)
 
 		if err != nil {
-			s.logger.Info("can't send time_removed for history", zap.Error(err))
+			s.logger.Info(zap.Error(err))
+			return err
 		}
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return err
 	}
 
 	return nil
 }
 
 // GetUser gets user from database
-func (s *PostgresStore) GetUser(id int64) (User, error) {
-	user := User{
-		Id:       id,
-		Segments: make([]string, 0),
+func (s *PostgresStore) GetUser(id int64) (*User, error) {
+	user := &User{Id: id, Segments: make([]string, 0)}
+
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	row := s.db.QueryRow(
+		`SELECT EXISTS ( SELECT 1 FROM users
+     	       WHERE id = $1) AS user_exists;`, id)
+
+	var exists bool
+	err = row.Scan(&exists)
+	if err != nil {
+		s.logger.Info(zap.Error(err))
+		return nil, err
+	}
+
+	if !exists {
+		return nil, nil
 	}
 
 	rows, err := s.db.Query(
@@ -277,42 +309,26 @@ func (s *PostgresStore) GetUser(id int64) (User, error) {
 		user.Id)
 
 	if err != nil {
-		s.logger.Info("can't get correct response from db", zap.Error(err))
-		return User{}, err
+		s.logger.Info(zap.Error(err))
+		return nil, err
 	}
 
 	for rows.Next() {
 		var segment string
 		err = rows.Scan(&user.Id, &segment)
 		if err != nil {
-			s.logger.Info("can't scan user-segment from storage", zap.Error(err))
+			s.logger.Info(zap.Error(err))
 			continue
 		}
 		user.Segments = append(user.Segments, segment)
 	}
 
 	if rows.Err() != nil {
-		s.logger.Info("can't scan rows in getUser", zap.Error(err))
-		return User{}, rows.Err()
+		s.logger.Info(zap.Error(err))
+		return nil, rows.Err()
 	}
 
 	return user, nil
-}
-
-// CheckUser checks that user with this id is already created in database
-func (s *PostgresStore) CheckUser(id int64) (bool, error) {
-	row := s.db.QueryRow(
-		`SELECT EXISTS ( SELECT 1 FROM users
-     	       WHERE id = $1) AS user_exists;`, id)
-
-	var res bool
-	err := row.Scan(&res)
-	if err != nil {
-		s.logger.Info("can't scan user_exists", zap.Error(err))
-		return false, err
-	}
-
-	return res, nil
 }
 
 // ttl every 30 seconds finds expired records in user_segment database
@@ -325,7 +341,7 @@ func (s *PostgresStore) ttl() {
 			time.Now().Unix())
 
 		if err != nil {
-			s.logger.Info("can't delete expired records", zap.Error(err))
+			s.logger.Info(zap.Error(err))
 		}
 	}
 }
